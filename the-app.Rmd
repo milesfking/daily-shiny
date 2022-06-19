@@ -17,17 +17,16 @@ library(httr)
 # Introduction
 
 This project was created to showcase information from a variety of public APIs integreated through a Shiny app. In the app, a user is prompted to input a date and is subsequently presented with an assortment of information about that date in time. This information is pulled from APIs and is categorized based on its content (Astrology, News, Sports, etc.). The APIs that are utilized are as follows:
-
-The NASA API
-The New York Times API
-The NBA API
-The Random Fact API
+  - The NASA API
+  - The New York Times API
+  - The NBA API
+  - The Random Fact API
 
 # Successful APIs
 
-## NBA API:
+## "Ball Don't Lie": NBA Scores API:
 
-This was pretty straightforward, using a very similar function to the NASA photo of the day. Instead of using an official NBA API, we opted for the "balldontlie" NBA API, which doesn't require a key to authorize requests to the API. The JSON list returned is a list of all games on a certain da, with information including score, who the home team was, and who the away team was. Our goal for this component of the project was to output a nicely formatted list of all of the scores, making it obvious using HTML text colors who the winner and loser of each individual game was. We accomplished this by outputting text using the `fluidRows()` method similar to the UI output that was used to output the example links in the shell of the NYT Shiny app. This was ultimately successful in outputting the scores in an simple, comprehensible, and visually appealing manner.
+The "Ball Don't Lie" NBA API returns NBA box scores for a particular date. This is an unofficial NBA API, but we opted to use it as it is a free API that doesn't require a key to authorize requests. The JSON list returned includes game scores, who the home team was, and who the away team was. Our goal for this component of the project was to output a nicely formatted list of all of the scores, color-coded to make it clear who the winner and loser of each individual game was. We accomplished this by outputting text using the `fluidRows()` method similar to the UI output that was used to output the example links in the shell of the NYT Shiny app. This was ultimately successful in outputting the scores in an simple, comprehensible, and visually appealing manner using HTML elements to provide additional formatting.
 
 ```{r}
 # No API key required 
@@ -49,37 +48,9 @@ get_nba_games = function(year, month, day) {
 }
 ```
 
-## Spotify API
-
-```{r}
-Sys.setenv(SPOTIFY_CLIENT_ID = '14f9f9b94733459cb9cdb896d9e2530a')
-Sys.setenv(SPOTIFY_CLIENT_SECRET = '')
-library(spotifyr)
-
-get_my_recently_played(
-  limit = 20,
-  after = NULL,
-  before = NULL,
-  authorization = get_spotify_authorization_code(),
-  include_meta_info = FALSE
-)
-
-search_spotify(
-  q,
-  type = c("album", "artist", "playlist", "track"),
-  market = NULL,
-  limit = 20,
-  offset = 0,
-  include_external = NULL,
-  authorization = get_spotify_access_token(),
-  include_meta_info = FALSE
-)
-```
-
-
 ## NASA API:
 
-We were succesful in accessing and wrangling data from the NASA API. This API was very simple to register for and code in, using code inspired from what we learned to make the NYT API. Specifically, we looked at the "Astronomy Picture of the Day" data from NASA and access historical images and explanations for a given date using the `get_nasa_photos()` button. The JSON returned by the function is easy to navigate as the list elements are clearly labeled `url` and `explanation`, and we integrated it into the Shiny app in a similar fashion to the NYT links (via an `actionButton`  that results in a modaDialog with further information upon a click).
+Using the free NASA API, we focused specifically on the "Astronomy Picture of the Day" that NASA chooses. We were able to retrieve historical images and explanations for a user-inputted date using the `get_nasa_photos()` function The JSON returned by the function is easy to navigate as the list elements are clearly labeled `url` and `explanation`, and we integrated it into the Shiny app via HTML.
 
 ```{r}
 NASA_key = "jlGOnZLwsTLhtxbcgWjUwOdvXEHBgt9Tpw1HgTGq"
@@ -177,17 +148,39 @@ get_nyt_articles = function(year, month, day, api_key) {
         web_url = "web_url",
         lead_paragraph = "lead_paragraph",
         source = "source",
-        word_count = "word_count") %>%
+        word_count = "word_count",
+        multimedia = "multimedia") %>%
   hoist(headline,
         main_headline = "main") %>%
   hoist(byline,
         authors = "original") %>%
-  select(main_headline, authors, web_url, lead_paragraph, source, word_count) %>%
+  select(main_headline, authors, web_url, lead_paragraph, source, word_count, multimedia) %>%
   arrange(main_headline)
+  
+  # grab the first image from multimedia (if it exists)
+  if (!all(is.na(nyt_df$multimedia))) {
+        nyt_images <- nyt_df %>%
+          unnest_longer(multimedia) %>%
+          hoist(multimedia, url = "url") %>%
+          group_by(main_headline)
+        
+        if ("url" %in% colnames(nyt_images)) {
+          nyt_df <- nyt_images %>%
+            summarise(img_url = url[1]) %>%
+            merge(nyt_df, by="main_headline") %>%
+            select(main_headline, authors, web_url, lead_paragraph, source, word_count, img_url)
+        }
+  }
+  
+  
   # return the cleaned data
   return(nyt_df)
 }
+
+get_nyt_articles("2020", "08", "30", NYT_key)
 ```
+
+
 
 
 ## Numbers API:
@@ -308,8 +301,8 @@ shinyApp(
                        str_sub(input$date, 6, 7),
                        str_sub(input$date, 9, 10),
                        NYT_key)
-        
-      # same code as example, except changing the loop to iterate over all entries in nyt (rather than an "i" specified in the UI)
+      
+      # loop to iterate over all entries in nyt (rather than an "i" specified in the UI)
       ui_elems = map(
         seq_len(nrow(nyt)), 
         function(i) 
@@ -327,13 +320,29 @@ shinyApp(
         function(i) {
           label = paste0("link",i)
           observeEvent(input[[label]], ignoreInit = TRUE, {
-             showModal(modalDialog(
+            # for articles with images, link to the image in an HTML tag
+            img_html = ""
+            if ("img_url" %in% colnames(nyt)) { #
+              if (!is.na(nyt$img_url)) {
+                img_html = paste0('<p style="text-align:center;"><img
+                           src="https://static01.nyt.com/',nyt$img_url[i],'"
+                           width="80%"
+                           height="80%">
+                           </p>')
+              }
+            }
+    
+            showModal(modalDialog(
                title = paste(nyt[i,1]),
                HTML(paste(nyt[i,2],
                       paste("Lead paragraph:", nyt[i,4]),
-                      paste("Sourced from", nyt[i, 5]),
+                      img_html,
+                      paste("<p><small>",
+                            "Sourced from", nyt[i, 5], "<br>",
+                            nyt[i, 6], "words",
+                            "</small></p>"),
                       sep = "<br><br>")),
-               div(paste(nyt[i, 6], "words"), style="font-size:60%"),
+               #div(paste(nyt[i, 6], "words"), style="font-size:60%"),
                footer = tagList(
                  # figuring out how to embed a link in the modal footer: https://shiny.rstudio.com/articles/tag-glossary.html
                  # button for the link: https://stackoverflow.com/questions/37795760/r-shiny-add-weblink-to-actionbutton
