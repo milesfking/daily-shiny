@@ -99,7 +99,6 @@ get_nasa_photos = function(year, month, day, api_key) {
   # returns a JSON
   NASA_json = jsonlite::read_json(NASA_url)
 }
-print(get_nasa_photos(2020,4,3, NASA_key))
 ```
 
 ## NYT API:
@@ -403,7 +402,10 @@ shinyApp(
       )
       
       # Validate input and then return fluidpage
-      output$scores = renderUI(fluidPage(ui_elems))
+      output$scores = renderUI({
+        validate(need(nrow(nba) > 0, "No scores to display for this date."))
+        fluidPage(ui_elems)
+        })
       
     })
     
