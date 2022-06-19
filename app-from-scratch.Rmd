@@ -1,0 +1,281 @@
+---
+title: "Sta 323 - Midterm 2 - Spring 2022"
+output: rmarkdown::html_document
+runtime: shiny
+---
+Due Wednesday, April 20th by 5:00 pm
+
+<br/>
+
+### Rules
+
+Review all of the rules detailed in `README.md`, if you have any questions please direct them to myself or the TAs.
+
+<br/>
+
+```{r}
+library(tidyverse)
+library(tibble)
+```
+
+
+### Task 1 - Figuring out the NY Times Article Search API
+
+```
+https://api.nytimes.com/svc/search/v2/articlesearch.json?begin_date=20200830&end_date=20200830&fq=document_type:(article)ANDprint_page:(1)ANDprint_section:(A)&api-key=ZpkPqA7UdZuj0XLQUHxKIBucmej1x71C&page=0
+```
+
+For this sample request, I used the `begin_date`, `end_date`, `fq`, `api-key`, and `page` fields.
+
+Firstly, I specified the `begin_date` and `end_date` parameters as 20200830, which, in "yyyymmdd" format, is my birthday in the first year I was enrolled in college. While I noticed that the `fq` parameter also included a `pub_date`, I found through testing that it was a lot more reliable to use `begin_date` and `end_date` to filter. Furthermore, specifying a beginning date and ending date also allows me to return results for a range of days if I would like (though it would require modifying the input into the Shiny in task 3).
+
+For the `fq` field, I knew that we were only interested in documents of the article type on the first page of the paper. As expressed in README, this means that `print_page` must be 1 and `print_section` must be A. From there, `document_type:(article)` was the final filter I needed. I then made sure to string these parameters of `fq` together using "AND" as specified in the API documentation.
+
+For the `api-key`, I just included my individualized API key.
+
+Finally, since the question asks only to return the first page of results (or information from only the first 10 articles), I needed to specify a value for `page`. After experimenting, I discovered that the offset of results is 0 when `page` equals 0, so I used `page=0` for my query.
+
+* `begin_date=20200830`
+
+* `end_date=20200830`
+
+* `fq=document_type:(article)AND print_page:(1)AND print_section:(A)`
+
+* `api-key=ZpkPqA7UdZuj0XLQUHxKIBucmej1x71C`
+
+* `page=0`
+
+<br/>    
+
+### Task 2 - Getting data from the NY Times Article Search API
+
+For task 2, I wrote the function `get_nyt_articles()` to return a dataframe of all of the articles returned from a single query. To do so, I first did some basic sanity checks on the function inputs. I first checked that each parameter was of length 1, and coerced them to be length one (with a warning message) if they were not. I then made all of the inputs strings so that I could use `stringr` functions like `str_pad` to ensure that each input was the correct number of characters. Finally, I made sure that `year`, `month`, and `date` were in an appropriate range (i.e. month between 1 and 12, day between 1 and 31) and threw and error if they were not. This prevents the entire function from running for an invalid date, where clearly no results would be returned.
+
+I then used `gsub()` to add user search parameters to the base NYT URL and save a new `search_url`.
+
+I then also initialized an empty dataframe and a `page_number` variable to prepare to iterate through all of the results. However, before entering the loop, I first handle the case where there are no results. If the query is empty (returns no results), I also include an if statement to gracefully break from the function and return an empty dataframe. This is achieved by checking whether the number of hits is 0, and it saves time by skipping the looping functionality (as well as the `hoist()` functions) automatically. If there are hits, I enter the loop. In each iteration of loop, I took the `search_url` and incremented only the `page` parameter to access query results 10 articles at a time via a repeat loop. After appending the specific page number field to the URL, I saved a temporary JSON from the query to extract my data from. Each iteration, I use `hoist()` to extract the `docs` list from the JSON before appending it to the dataframe.
+
+For pagination, I opted to record  the number of hits at the beginning of the loop. Since the first search will tell us how many hits there are (and thus exactly how many times to run the loop), I found that I could save runtime by immediately computing what `page_number` value to stop at (instead of comparing the `offset` to the `hits` every single time through the loop). After experimenting, I found that the loop should terminate when page number equals `ceiling(hits/10) - 1` and I used an if statement to break from the loop when this condition is met. Overall, these two changes (checking hits and handling 0 hits gracefully outside of the loop rather than every iteration) saved a few seconds each time.
+
+Finally, if the loop has not already been broken, the page number is incremented and the system sleeps (using `Sys.sleep`) for 5.5 seconds before running the next query. This prevents us from hitting the search limit on the API. I considered using an if statement to disable this cool-down for queries where there were between 0 and 100 hits, as the API limit is 100 searches per minute. However, I ultimately decided against this, as doing so means that the user manually needs to determine how long to wait between executing code chunks or changing the date in the task 3 Shiny app. As such, I decided to keep the cool-down on permanently (and sacrifice run-time) in order to prevent exceeding the limit accidentally. The loop takes a little over 0.5 seconds to run, so 5.5 seconds causes ten iterations of the loop to take just enough over a minute to run to prevent reaching the API request limit.
+
+```{r}
+start.time <- Sys.time()
+get_nyt_articles = function(year, month, day, api_key) {
+  
+  # SANITY CHECKS
+  # checking lengths
+  if (length(year) > 1) {
+    year = year[1]
+    warning("Year has length > 1 and only the first element will be used")}
+  if (length(month) > 1) {
+    month = month[1]
+    warning("Month has length > 1 and only the first element will be used")}
+  if (length(day) > 1) {
+    day = day[1]
+    warning("Day has length > 1 and only the first element will be used")}
+  # adding / removing 0s from inputs so that they are the proper length
+  # this prevents single digit month and day inputs from causing problems (i.e. 08-30-2020 is treated the same as 8-30-2020)
+  if (nchar(year) != 4) {year <- str_pad(year, width = 4, pad = "0")}
+  if (nchar(month) != 2) {month <- str_pad(month, width = 2, pad = "0")}
+  if (nchar(day) != 2) {day <- str_pad(day, width = 2, pad = "0")}
+  
+  # testing that inputs are in the proper range
+  if (as.integer(year) < 0001 | as.integer(year) > 2022) {
+    stop("Year input must be between 1 and 2022")
+    }
+  if (as.integer(month) < 01 | as.integer(month) > 12) {
+    stop("Month input must be between 1 and 12")
+    }
+  if (as.integer(day) < 01 | as.integer(day) > 31) {
+    stop("Day input must be between 1 and 31")
+    }
+  
+  
+  # CHANGE THE URL
+  
+  # base url before entry of the date or API key
+  base_url <- "https://api.nytimes.com/svc/search/v2/articlesearch.json?begin_date=yearmonthday&end_date=yearmonthday&fq=document_type:(article)ANDprint_page:(1)ANDprint_section:(A)&api-key=apikey&page=page_number"
+  
+  # gsub inspiration from https://stackoverflow.com/questions/5487164/r-how-to-replace-parts-of-variable-strings-within-data-frame
+  # using gsub to add date to URL
+  yearmonthday = paste(year, month, day, sep = "")
+  year_url <- gsub("yearmonthday", yearmonthday, base_url)
+  
+  # using gsub to add API key to URL
+  search_url <- gsub("apikey", api_key, year_url)
+  
+  
+  # ITERATE OVER ALL PAGES OF ARTICLE DATA
+  
+  # initialize dataframe as empty
+  nyt_df = tibble()
+  
+  # initialize page number as zero
+  page_number = 0
+  
+  # read in url for page = 0 as a JSON
+  full_url = gsub("page_number", page_number, search_url)
+  nyt_json = jsonlite::read_json(full_url)
+  # count the number of hits
+  metadata = tibble(nyt_json)[3,] %>%
+    hoist(nyt_json, "meta") %>%
+    hoist(meta, "hits")
+  hits = metadata[[1, 1]]
+  # if there are no hits, break from the loop "gracefully"
+  if (hits == 0) {
+    return(nyt_df) # by breaking, our dataframe will just be empty 
+  }
+    
+  # otherwise, loop over all page numbers using a repeat loop
+  # https://www.geeksforgeeks.org/loops-in-r-for-while-repeat/
+  repeat {
+    # pull full URL (with page number), read it in as a JSON
+    if (page_number > 0) { # since we did this for page = 0 above, only re-load this on subsequent page numbers
+      full_url = gsub("page_number", page_number, search_url)
+      nyt_json = jsonlite::read_json(full_url)
+    }
+    
+    # if there are hits, fetch the complete article data and append to nyt_df
+    articles = tibble(nyt_json)[3,] %>%
+    hoist(nyt_json, "docs") %>%
+    # unnest longer so that dataframe is tidy: each row is a distinct article
+    unnest_longer(docs) %>%
+    select(docs)
+    
+    # append the data from this page to the data that has already been scraped
+    nyt_df = rbind(nyt_df, articles)
+    
+    # when we reach the end of the list of articles, break from the loop
+    if (page_number == ceiling(hits/10) - 1) {
+      break
+    }
+    
+    # increment page and cool for 5.5 seconds when it is necessary
+    page_number = page_number + 1
+    #if (hits > 100) {
+      Sys.sleep(5.5)
+    #}
+  }
+  
+  
+  
+  # CLEAN THE DATA
+  # if the query returned data, flatten it with hoist
+  nyt_df <- nyt_df %>%
+  hoist(docs,
+        headline = "headline",
+        byline = "byline",
+        web_url = "web_url",
+        lead_paragraph = "lead_paragraph",
+        source = "source",
+        word_count = "word_count") %>%
+  hoist(headline,
+        main_headline = "main") %>%
+  hoist(byline,
+        authors = "original") %>%
+  select(main_headline, authors, web_url, lead_paragraph, source, word_count) %>%
+  arrange(main_headline)
+  # return the cleaned data
+  return(nyt_df)
+}
+# trial with my birthday
+# get_nyt_articles("2020", "08", "30", "ZpkPqA7UdZuj0XLQUHxKIBucmej1x71C")
+```
+
+
+<br/>
+
+### Task 3 - Shiny Front End
+
+For task 3, I modified the existing Shiny implementation to create a Shiny app that returns a formatted list of headlines from a specified day. To do so, I added a `dateInput()` and a `textInput()` in the UI where users input a date and an API key, respectively. Upon clicking the "Get Articles" button, a call is then made to the `get_nyt_articles()` function with the specified year, month, day, and API key. Using specific columns of this new `nyt` dataset, I modified the bare-bones versions of `ui_elems` to dynamically format and return the articles from that day. I also created modal dialogs in the creation of the observers so that clicking on an indiviual article causes there to be a pop-up with more information about that article, as well as two buttons created in the `modalDialog` to either return back to the list of articles or follow the link to the full article on nytimes.com. Finally, I added a `validate()` to add an explanation for when no results are found. This helps make it clear when the function has finished running regardless of how many results get returned (because there will always be something that appears after pressing the action button).
+
+```{r}
+library(shiny)
+library(purrr)
+shinyApp(
+  ui = fluidPage(
+    tags$head(tags$style(HTML("
+          .shiny-output-error-validation {
+          color: #1e2f97;
+          font-weight: bold;"))),
+    titlePanel("Interactive NYTimes Article Search API"),
+    sidebarLayout(
+      sidebarPanel(
+        h4("Search Parameters: "),
+        dateInput("date", "Search Date (yyyy-mm-dd)", value = "2020-08-30"),
+        textInput("key", "API Key", value = "ZpkPqA7UdZuj0XLQUHxKIBucmej1x71C"),
+        h4("Retrieve Article Data:"),
+        actionButton("retrieve", "Get Articles", class = "btn btn-primary")
+      ),
+      mainPanel(
+        h3("Search Results: "),
+        h6("Click on an article for more information"),
+        uiOutput("links")
+      )
+    )
+  ),
+  server = function(input, output, session) {
+    state = reactiveValues(
+      observers = list()
+    )
+    
+    observeEvent(input$retrieve, {
+      
+      # destroy existing observers (carried over from example code)
+      for(i in seq_along(state$observers)) {
+        state$observers[[i]]$destroy()
+      }
+      
+      # calling function from task 2 with given inputs
+      # str_sub breaks apart data input into year, month, day
+      nyt = get_nyt_articles(str_sub(input$date, 1, 4),
+                       str_sub(input$date, 6, 7),
+                       str_sub(input$date, 9, 10),
+                       input$key)
+        
+      # same code as example, except changing the loop to iterate over all entries in nyt (rather than an "i" specified in the UI)
+      ui_elems = map(
+        seq_len(nrow(nyt)), 
+        function(i) 
+          fluidRow(actionLink(paste0("link",i), paste0(nyt[i,1]))) # changed to paste the title nyt[i,1] rather than the article number
+      )
+      
+      output$links = renderUI({
+        validate(need(nrow(nyt) > 0, "No articles found for the given parameters."))
+        fluidPage(ui_elems)
+        })
+      
+      # reset and create new observers for each of our links
+      state$observers = map(
+        seq_len(nrow(nyt)), 
+        function(i) {
+          label = paste0("link",i)
+          observeEvent(input[[label]], ignoreInit = TRUE, {
+             showModal(modalDialog(
+               title = paste(nyt[i,1]),
+               HTML(paste(nyt[i,2],
+                      paste("Lead paragraph:", nyt[i,4]),
+                      paste("Sourced from", nyt[i, 5]),
+                      # source for "<br>" https://stackoverflow.com/questions/44432771/insert-a-new-line-in-shinys-modaldialog
+                      sep = "<br><br>")),
+               div(paste(nyt[i, 6], "words"), style="font-size:60%"),
+               footer = tagList(
+                 # figuring out how to embed a link in the modal footer: https://shiny.rstudio.com/articles/tag-glossary.html
+                 # button for the link: https://stackoverflow.com/questions/37795760/r-shiny-add-weblink-to-actionbutton
+  
+                 actionButton(inputId='read', label="Read Article",
+                              class = "btn btn-primary",
+                              icon = icon("th"), 
+                              onclick = paste0("window.open('", nyt[[i, 3]],  "', '_blank')")),
+                 
+                 modalButton("Return")
+                 )
+               ))
+          })
+          }
+        )
+    })
+    }
+)
+```
