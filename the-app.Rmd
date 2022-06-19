@@ -99,7 +99,7 @@ get_nasa_photos = function(year, month, day, api_key) {
   # returns a JSON
   NASA_json = jsonlite::read_json(NASA_url)
 }
-print(get_nasa_photos(2020,8,3, NASA_key))
+print(get_nasa_photos(2020,4,3, NASA_key))
 ```
 
 ## NYT API:
@@ -239,7 +239,7 @@ shinyApp(
         tabsetPanel(
         tabPanel("Astronomy", 
                  h3("Astronomy Picture of the Day"),
-                 uiOutput("nasa_link")),
+                 htmlOutput("nasa_link")),
         tabPanel("News",
                  h3("Front Page of the New York Times"),
                  h5("Click on an article title to learn more"),
@@ -276,28 +276,16 @@ shinyApp(
                              as.numeric(str_sub(input$date, 9, 10)),
                              NASA_key)
       
-      # button in shiny app that allows you to find out more
+      
       output$nasa_link = renderUI({
-        h4(actionLink("explanation", paste(nasa$title)))
-      })
-      
-      for(i in seq_along(state$nasa_observers)) {
-        state$nasa_observers[[i]]$destroy()
-      }
-      
-      # creates modal dialog with description of the image and link to it
-      state$nasa_observers[[1]] = observeEvent(input$explanation, ignoreInit = TRUE, {
-        showModal(modalDialog(
-          title = paste(nasa$title),
-          div(nasa$explanation),
-          footer = tagList(
-            actionButton(inputId='read', label="See Image",
-                         class = "btn btn-primary",
-                         icon = icon("th"), 
-                         onclick = paste0("window.open('", nasa$url,  "', '_blank')")),
-            modalButton("Return")
-          )
-        ))
+        #img(src=nasa$url, width="500", height="600")
+        HTML(paste0(
+          "<img src=",nasa$url," width='80%', height='80%'>",
+          "<br>",
+          "<h4>", '"', nasa$title, '"', "</h4>",
+          #"<p><small>", "Copyright: ", nasa$copyright, "</small></p>",
+          "<p>", nasa$explanation, "</p>"
+          ))
       })
     })
     
